@@ -49,31 +49,66 @@ pub mod mit {
     ) -> Result<()> {
         msg!("register_affiliate {:?}", &unique_link);
 
+        ctx.light_accounts.affiliate.campaign_id = ctx.light_accounts.campaign.campaign_id;
         ctx.light_accounts.affiliate.affiliate_pubkey = ctx.accounts.signer.key();
         ctx.light_accounts.affiliate.total_clicks = 0;
         ctx.light_accounts.affiliate.unique_link = unique_link;
+        ctx.light_accounts.affiliate.claimed = false;
 
         Ok(())
     }
 
-    pub fn increment<'info>(ctx: LightContext<'_, '_, '_, 'info, Increment<'info>>) -> Result<()> {
-        ctx.light_accounts.counter.counter += 1;
+    pub fn record_click<'info>(
+        ctx: LightContext<'_, '_, '_, 'info, RecordClick<'info>>,
+    ) -> Result<()> {
+        msg!("record_click");
+
+        ctx.light_accounts.affiliate.total_clicks = ctx
+            .light_accounts
+            .affiliate
+            .total_clicks
+            .checked_add(1)
+            .unwrap();
+
+        ctx.light_accounts.campaign.data.clicks = ctx
+            .light_accounts
+            .campaign
+            .data
+            .clicks
+            .checked_add(1)
+            .unwrap();
 
         Ok(())
     }
 
-    pub fn delete<'info>(ctx: LightContext<'_, '_, '_, 'info, Delete<'info>>) -> Result<()> {
+    pub fn claim<'info>(ctx: LightContext<'_, '_, '_, 'info, Claim<'info>>) -> Result<()> {
+        msg!("claim");
+
+        ctx.light_accounts.affiliate.claimed = true;
+        
+         // send fund to vault
+         system_program::transfer(
+            CpiContext::new(
+                ctx.accounts.system_program.to_account_info(),
+                system_program::Transfer {
+                    from: ctx.accounts.vault.to_account_info(),
+                    to: ctx.accounts.signer.to_account_info(),
+                },
+            ),
+            100,
+        )?;
+
         Ok(())
     }
 }
 
-#[light_account]
-#[derive(Clone, Debug, Default)]
-pub struct CounterCompressedAccount {
-    #[truncate]
-    pub owner: Pubkey,
-    pub counter: u64,
-}
+// #[light_account]
+// #[derive(Clone, Debug, Default)]
+// pub struct CounterCompressedAccount {
+//     #[truncate]
+//     pub owner: Pubkey,
+//     pub counter: u64,
+// }
 
 #[error_code]
 pub enum CustomError {
@@ -130,42 +165,90 @@ pub struct RegisterAffiliate<'info> {
 }
 
 #[light_accounts]
-pub struct Increment<'info> {
+pub struct RecordClick<'info> {
     #[account(mut)]
     #[fee_payer]
     pub signer: Signer<'info>,
+
     #[self_program]
     pub self_program: Program<'info, crate::program::Mit>,
+
     /// CHECK: Checked in light-system-program.
     #[authority]
     pub cpi_signer: AccountInfo<'info>,
 
-    #[light_account(
-        mut,
-        seeds = [b"counter", signer.key().as_ref()],
-        constraint = counter.owner == signer.key() @ CustomError::Unauthorized
-    )]
-    pub counter: LightAccount<CounterCompressedAccount>,
+    #[light_account(mut, seeds = [b"campaign", signer.key().as_ref(), campaign.campaign_id.to_le_bytes().as_ref()  ])]
+    pub campaign: LightAccount<Campaign>,
+
+    #[light_account(mut, seeds = [b"affiliate", signer.key().as_ref(), affiliate.campaign_id.to_le_bytes().as_ref() ])]
+    pub affiliate: LightAccount<AffiliateLink>,
 }
 
 #[light_accounts]
-pub struct Delete<'info> {
+pub struct Claim<'info> {
     #[account(mut)]
     #[fee_payer]
     pub signer: Signer<'info>,
+
     #[self_program]
     pub self_program: Program<'info, crate::program::Mit>,
+
     /// CHECK: Checked in light-system-program.
     #[authority]
     pub cpi_signer: AccountInfo<'info>,
 
-    #[light_account(
-        close,
-        seeds = [b"counter", signer.key().as_ref()],
-        constraint = counter.owner == signer.key() @ CustomError::Unauthorized
+    #[light_account(mut, seeds = [b"campaign", signer.key().as_ref(), campaign.campaign_id.to_le_bytes().as_ref()  ])]
+    pub campaign: LightAccount<Campaign>,
+
+    #[light_account(mut, seeds = [b"affiliate", signer.key().as_ref(), affiliate.campaign_id.to_le_bytes().as_ref()  ])]
+    pub affiliate: LightAccount<AffiliateLink>,
+
+    #[account(
+        mut,
+        seeds = [b"vault", signer.key().as_ref()],
+        bump,
     )]
-    pub counter: LightAccount<CounterCompressedAccount>,
+    /// CHECK vault
+    pub vault: UncheckedAccount<'info>,
 }
+
+// #[light_accounts]
+// pub struct Increment<'info> {
+//     #[account(mut)]
+//     #[fee_payer]
+//     pub signer: Signer<'info>,
+//     #[self_program]
+//     pub self_program: Program<'info, crate::program::Mit>,
+//     /// CHECK: Checked in light-system-program.
+//     #[authority]
+//     pub cpi_signer: AccountInfo<'info>,
+
+//     #[light_account(
+//         mut,
+//         seeds = [b"counter", signer.key().as_ref()],
+//         constraint = counter.owner == signer.key() @ CustomError::Unauthorized
+//     )]
+//     pub counter: LightAccount<CounterCompressedAccount>,
+// }
+
+// #[light_accounts]
+// pub struct Delete<'info> {
+//     #[account(mut)]
+//     #[fee_payer]
+//     pub signer: Signer<'info>,
+//     #[self_program]
+//     pub self_program: Program<'info, crate::program::Mit>,
+//     /// CHECK: Checked in light-system-program.
+//     #[authority]
+//     pub cpi_signer: AccountInfo<'info>,
+
+//     #[light_account(
+//         close,
+//         seeds = [b"counter", signer.key().as_ref()],
+//         constraint = counter.owner == signer.key() @ CustomError::Unauthorized
+//     )]
+//     pub counter: LightAccount<CounterCompressedAccount>,
+// }
 
 // accounts
 
@@ -243,11 +326,11 @@ impl AsByteVec for CampaignStatus {
 #[light_account]
 #[derive(Clone, Debug, Default)]
 pub struct AffiliateLink {
-    #[truncate]
-    pub campaign_key: Pubkey,
+    pub campaign_id: u64,
     #[truncate]
     pub affiliate_pubkey: Pubkey,
     #[truncate]
     pub unique_link: String,
     pub total_clicks: u64,
+    pub claimed: bool,
 }

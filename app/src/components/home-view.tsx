@@ -39,7 +39,7 @@ const setComputeUnitPriceIx = ComputeBudgetProgram.setComputeUnitPrice({
   microLamports: 1,
 });
 
-const campaignId = new BN(40);
+const campaignId = new BN(41);
 
 export const HomeView = () => {
   const { publicKey, signTransaction } = useWallet();
@@ -106,11 +106,7 @@ export const HomeView = () => {
       };
 
       const [vaultPda] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("vault"),
-          publicKey!.toBuffer(),
-          // campaignId.toArrayLike(Buffer, "le", 8),
-        ],
+        [Buffer.from("vault"), publicKey!.toBuffer()],
         program.programId
       );
 
@@ -224,8 +220,6 @@ export const HomeView = () => {
         throw new Error("Failed to get affiliateProof base data hash");
       }
 
-      rpc.getValidityProof()
-
       // campaig
       const campaignAddressSeed = deriveAddressSeed(
         [
@@ -251,8 +245,8 @@ export const HomeView = () => {
         [
           {
             hash: bn(Uint8Array.from(campaignData.hash)),
-            tree: addressTree,
-            queue: addressQueue,
+            tree: merkleTree,
+            queue: nullifierQueue,
           },
         ],
         undefined
