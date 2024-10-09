@@ -9,11 +9,8 @@ import {
   bn,
   defaultStaticAccountsStruct,
   LightSystemProgram,
-  deriveAddressSeed,
   deriveAddress,
-  defaultTestStateTreeAccounts,
-  PackedMerkleContext,
-  MerkleContext,
+  toAccountMetas,
 } from "@lightprotocol/stateless.js";
 import { useWallet } from "@solana/wallet-adapter-react";
 import {
@@ -24,7 +21,13 @@ import {
 } from "@solana/web3.js";
 import dynamic from "next/dynamic";
 import { campaignSchema } from "@/idl/schema";
-import { packMerkleContext } from "@/lib/helper";
+import {
+  createNewAddressOutputState,
+  deriveSeed,
+  getNewAddressParams,
+  packNew,
+  packWithInput,
+} from "@/lib/helper";
 
 const WalletMultiButtonDynamic = dynamic(
   async () =>
@@ -40,7 +43,7 @@ const setComputeUnitPriceIx = ComputeBudgetProgram.setComputeUnitPrice({
   microLamports: 1,
 });
 
-const campaignId = new BN(43);
+const campaignId = new BN(44);
 
 export const HomeView = () => {
   const { publicKey, signTransaction } = useWallet();
@@ -60,10 +63,10 @@ export const HomeView = () => {
         accountCompressionProgram,
       } = defaultStaticAccountsStruct();
 
-      const { addressQueue, addressTree, merkleTree, nullifierQueue } =
-        defaultTestStateTreeAccounts();
+      // const { addressQueue, addressTree, merkleTree, nullifierQueue } =
+      //   defaultTestStateTreeAccounts();
 
-      const addressSeed = deriveAddressSeed(
+      const addressSeed = deriveSeed(
         [
           Buffer.from("campaign"),
           publicKey!.toBuffer(),
@@ -86,25 +89,45 @@ export const HomeView = () => {
         throw new Error("Failed to get base data hash");
       }
 
-      const remainingAccounts: Array<AccountMeta> = [];
+      const newAddressesParams = [];
 
-      const merkleContext: PackedMerkleContext = {
-        merkleTreePubkeyIndex: insertOrGet(remainingAccounts, merkleTree),
-        nullifierQueuePubkeyIndex: insertOrGet(
-          remainingAccounts,
-          nullifierQueue
-        ),
-        leafIndex: 0,
-        queueIndex: null,
-      };
+      newAddressesParams.push(getNewAddressParams(addressSeed, assetProof));
 
-      const addressMerkleContext = {
-        addressMerkleTreePubkeyIndex: insertOrGet(
-          remainingAccounts,
-          addressTree
-        ),
-        addressQueuePubkeyIndex: insertOrGet(remainingAccounts, addressQueue),
-      };
+      const outputCompressedAccounts = [];
+
+      outputCompressedAccounts.push(
+        ...LightSystemProgram.createNewAddressOutputState(
+          Array.from(address.toBytes()),
+          program.programId
+        )
+      );
+
+      const {
+        addressMerkleContext,
+        addressMerkleTreeRootIndex,
+        merkleContext,
+        remainingAccounts,
+      } = packNew(outputCompressedAccounts, newAddressesParams, assetProof);
+
+      // const remainingAccounts: Array<AccountMeta> = [];
+
+      // const merkleContext: PackedMerkleContext = {
+      //   merkleTreePubkeyIndex: insertOrGet(remainingAccounts, merkleTree),
+      //   nullifierQueuePubkeyIndex: insertOrGet(
+      //     remainingAccounts,
+      //     nullifierQueue
+      //   ),
+      //   leafIndex: 0,
+      //   queueIndex: null,
+      // };
+
+      // const addressMerkleContext = {
+      //   addressMerkleTreePubkeyIndex: insertOrGet(
+      //     remainingAccounts,
+      //     addressTree
+      //   ),
+      //   addressQueuePubkeyIndex: insertOrGet(remainingAccounts, addressQueue),
+      // };
 
       const [vaultPda] = PublicKey.findProgramAddressSync(
         [Buffer.from("vault"), publicKey!.toBuffer()],
@@ -120,7 +143,7 @@ export const HomeView = () => {
           merkleContext,
           0,
           addressMerkleContext,
-          assetProof.rootIndices[0],
+          addressMerkleTreeRootIndex,
           campaignId,
           {
             name: "abc",
@@ -153,7 +176,7 @@ export const HomeView = () => {
           registeredProgramPda,
           lightSystemProgram: LightSystemProgram.programId,
         })
-        .remainingAccounts(remainingAccounts)
+        .remainingAccounts(toAccountMetas(remainingAccounts))
         .instruction();
 
       const blockhash = await rpc.getLatestBlockhash();
@@ -195,34 +218,7 @@ export const HomeView = () => {
         accountCompressionProgram,
       } = defaultStaticAccountsStruct();
 
-      const { addressQueue, addressTree, merkleTree, nullifierQueue } =
-        defaultTestStateTreeAccounts();
-
-      const affiliateAddressSeed = deriveAddressSeed(
-        [
-          Buffer.from("affiliate"),
-          publicKey!.toBuffer(),
-          campaignId.toArrayLike(Buffer, "le", 8),
-        ],
-        program.programId
-      );
-
-      const affiliateAddress = deriveAddress(affiliateAddressSeed);
-
-      console.log("affiliateAddressSeed", affiliateAddress.toBase58());
-
-      const affiliateProof = await rpc.getValidityProof(undefined, [
-        bn(affiliateAddress.toBytes()),
-      ]);
-
-      console.log("assetProof", affiliateProof);
-
-      if (!affiliateProof) {
-        throw new Error("Failed to get affiliateProof base data hash");
-      }
-
-      // campaig
-      const campaignAddressSeed = deriveAddressSeed(
+      const campaignAddressSeed = deriveSeed(
         [
           Buffer.from("campaign"),
           publicKey!.toBuffer(),
@@ -243,53 +239,61 @@ export const HomeView = () => {
         throw new Error("Failed to get campaignData data hash");
       }
 
-      const campaignProof = await rpc.getValidityProofV0(
-        [
-          {
-            hash: bn(Uint8Array.from(campaignData.hash)),
-            tree: campaignData.merkleTree,
-            queue: campaignData.nullifierQueue,
-          },
-        ],
-        undefined
+      const affiliateAddressSeed = deriveSeed(
+        [Buffer.from("affiliate"), publicKey!.toBuffer()],
+        program.programId
       );
 
-      console.log("campaignProof", campaignProof);
+      const affiliateAddress = deriveAddress(affiliateAddressSeed);
 
-      const remainingAccounts: Array<AccountMeta> = [];
+      console.log("affiliateAddressSeed", affiliateAddress.toBase58());
 
-      const merkleContext: MerkleContext = {
-        merkleTree: campaignData.merkleTree,
-        nullifierQueue: campaignData.nullifierQueue,
-        leafIndex: campaignData.leafIndex,
-        hash: campaignData.hash,
-      };
+      const proof = await rpc.getValidityProof(
+        [bn(campaignData.hash)],
+        [bn(affiliateAddress.toBytes())]
+      );
 
-      const packedMerkleContext = packMerkleContext(
+      console.log("assetProof", proof);
+
+      if (!proof) {
+        throw new Error("Failed to get affiliateProof base data hash");
+      }
+
+      const outputCompressedAccounts = [];
+
+      outputCompressedAccounts.push(
+        ...createNewAddressOutputState(campaignAddress, program.programId)
+      );
+
+      outputCompressedAccounts.push(
+        ...createNewAddressOutputState(affiliateAddress, program.programId)
+      );
+
+      const newAddressesParams = [];
+
+      newAddressesParams.push(getNewAddressParams(affiliateAddressSeed, proof));
+
+      const {
+        addressMerkleContext,
+        addressMerkleTreeRootIndex,
         merkleContext,
-        remainingAccounts
+        remainingAccounts,
+      } = packWithInput(
+        [campaignData],
+        outputCompressedAccounts,
+        newAddressesParams,
+        proof
       );
-
-      console.log("packedMerkleContext", packedMerkleContext);
-
-      const addressMerkleContext = {
-        addressMerkleTreePubkeyIndex: insertOrGet(
-          remainingAccounts,
-          addressTree
-        ),
-        addressQueuePubkeyIndex: insertOrGet(remainingAccounts, addressQueue),
-      };
 
       const ix = await program.methods
-        .registerAffiliate(
+        .registerV2(
           [campaignData.data.data],
-          campaignProof.compressedProof,
-          packedMerkleContext,
-          campaignProof.rootIndices[0],
+          proof.compressedProof,
+          merkleContext,
+          proof.rootIndices[0],
           addressMerkleContext,
-          0,
-          affiliateProof.compressedProof,
-          "campaignId"
+          addressMerkleTreeRootIndex,
+          campaignId
         )
         .accounts({
           signer: publicKey,
@@ -306,7 +310,7 @@ export const HomeView = () => {
           registeredProgramPda,
           lightSystemProgram: LightSystemProgram.programId,
         })
-        .remainingAccounts(remainingAccounts)
+        .remainingAccounts(toAccountMetas(remainingAccounts))
         .instruction();
 
       const blockhash = await rpc.getLatestBlockhash();

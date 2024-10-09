@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use borsh::BorshDeserialize;
 use light_hasher::bytes::AsByteVec;
+use light_sdk::merkle_context::PackedMerkleContext;
 use light_sdk::{
     address::derive_address_seed,
     compressed_account::LightAccount,
@@ -126,6 +127,15 @@ pub mod mit {
         Ok(())
     }
 
+    pub fn register_v2<'info>(
+        ctx: LightContext<'_, '_, '_, 'info, RegisterAffiliateV2<'info>>,
+        campaign_id: u64,
+    ) -> Result<()> {
+        msg!("register_v2 {:?}", campaign_id);
+
+        Ok(())
+    }
+
     pub fn record_click<'info>(
         ctx: LightContext<'_, '_, '_, 'info, RecordClick<'info>>,
     ) -> Result<()> {
@@ -219,15 +229,30 @@ pub struct RegisterAffiliate<'info> {
     #[authority]
     pub cpi_signer: AccountInfo<'info>,
 
-    // #[account(
-    //     seeds = [CPI_AUTHORITY_PDA_SEED],
-    //     bump
-    // )]
-    // pub cpi_authority_pda: UncheckedAccount<'info>,
     #[light_account(mut, seeds = [b"campaign", signer.key().as_ref(), campaign.campaign_id.to_le_bytes().as_ref()  ])]
     pub campaign: LightAccount<Campaign>,
     // #[light_account(init, seeds = [b"affiliate", signer.key().as_ref(), campaign.campaign_id.to_le_bytes().as_ref()  ])]
     // pub affiliate: LightAccount<AffiliateLink>,
+}
+
+#[light_accounts]
+pub struct RegisterAffiliateV2<'info> {
+    #[account(mut)]
+    #[fee_payer]
+    pub signer: Signer<'info>,
+
+    #[self_program]
+    pub self_program: Program<'info, crate::program::Mit>,
+
+    /// CHECK: Checked in light-system-program.
+    #[authority]
+    pub cpi_signer: AccountInfo<'info>,
+
+    #[light_account(mut, seeds = [b"campaign", signer.key().as_ref(), campaign.campaign_id.to_le_bytes().as_ref()  ])]
+    pub campaign: LightAccount<Campaign>,
+
+    #[light_account(init, seeds = [b"affiliate", signer.key().as_ref()  ])]
+    pub affiliate: LightAccount<AffiliateLink>,
 }
 
 #[light_accounts]
@@ -277,8 +302,6 @@ pub struct Claim<'info> {
     /// CHECK vault
     pub vault: UncheckedAccount<'info>,
 }
-
-// accounts
 
 #[light_account]
 #[derive(Clone, Debug, Default)]
@@ -361,4 +384,14 @@ pub struct AffiliateLink {
     pub unique_link: String,
     pub total_clicks: u64,
     pub claimed: bool,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize)]
+pub struct LightRootParams {
+    pub inputs: Vec<Vec<u8>>,
+    pub proof: CompressedProof,
+    pub merkle_context: PackedMerkleContext,
+    pub merkle_tree_root_index: u16,
+    pub address_merkle_context: PackedAddressMerkleContext,
+    pub address_merkle_tree_root_index: u16,
 }
