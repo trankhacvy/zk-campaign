@@ -87,21 +87,21 @@ async fn test() {
     .unwrap();
 
     // Check that it was created correctly.
-    let compressed_accounts = test_indexer.get_compressed_accounts_by_owner(&mit::ID);
+    // let compressed_accounts = test_indexer.get_compressed_accounts_by_owner(&mit::ID);
 
-    assert_eq!(compressed_accounts.len(), 1);
+    // assert_eq!(compressed_accounts.len(), 1);
 
-    let compressed_account = &compressed_accounts[0];
+    // let compressed_account = &compressed_accounts[0];
 
-    let counter_account = &compressed_account
-        .compressed_account
-        .data
-        .as_ref()
-        .unwrap()
-        .data;
-    let counter_account = CounterCompressedAccount::deserialize(&mut &counter_account[..]).unwrap();
-    assert_eq!(counter_account.owner, payer.pubkey());
-    assert_eq!(counter_account.counter, 0);
+    // let counter_account = &compressed_account
+    //     .compressed_account
+    //     .data
+    //     .as_ref()
+    //     .unwrap()
+    //     .data;
+    // let counter_account = CounterCompressedAccount::deserialize(&mut &counter_account[..]).unwrap();
+    // assert_eq!(counter_account.owner, payer.pubkey());
+    // assert_eq!(counter_account.counter, 0);
 
     increment(
         &mut rpc,

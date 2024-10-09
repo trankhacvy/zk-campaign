@@ -1,17 +1,29 @@
 use anchor_lang::prelude::*;
+use anchor_lang::system_program;
 use borsh::BorshDeserialize;
 use light_hasher::bytes::AsByteVec;
 use light_sdk::{
-    compressed_account::LightAccount, light_account, light_accounts, light_program,
-    merkle_context::PackedAddressMerkleContext, LightHasher,
+    address::derive_address_seed,
+    compressed_account::LightAccount,
+    light_account, light_accounts, light_program,
+    merkle_context::{PackedAddressMerkleContext, PackedMerkleOutputContext},
+    proof::CompressedProof,
+    utils::create_cpi_inputs_for_new_account,
+    verify::verify,
+    LightHasher, CPI_AUTHORITY_PDA_SEED,
 };
+
+mod utils;
+
+use utils::*;
 
 declare_id!("7zF2xa5P22ahMqdQYo9P4kjD4qxvUy5hGozmk8DyB3iz");
 
 #[light_program]
 #[program]
 pub mod mit {
-    use anchor_lang::system_program;
+
+    use light_sdk::traits::InvokeCpiAccounts;
 
     use super::*;
 
@@ -45,15 +57,71 @@ pub mod mit {
 
     pub fn register_affiliate<'info>(
         ctx: LightContext<'_, '_, '_, 'info, RegisterAffiliate<'info>>,
+        // ctx: Context<'_, '_, '_, 'info, RegisterAffiliate<'info>>,
+        affiliate_proof: CompressedProof,
         unique_link: String,
     ) -> Result<()> {
         msg!("register_affiliate {:?}", &unique_link);
 
-        ctx.light_accounts.affiliate.campaign_id = ctx.light_accounts.campaign.campaign_id;
-        ctx.light_accounts.affiliate.affiliate_pubkey = ctx.accounts.signer.key();
-        ctx.light_accounts.affiliate.total_clicks = 0;
-        ctx.light_accounts.affiliate.unique_link = unique_link;
-        ctx.light_accounts.affiliate.claimed = false;
+        let campaign = &ctx.light_accounts.campaign;
+
+        let merkle_output_context = PackedMerkleOutputContext {
+            merkle_tree_pubkey_index: 0,
+        };
+        let address_merkle_context = PackedAddressMerkleContext {
+            address_merkle_tree_pubkey_index: 1,
+            address_queue_pubkey_index: 2,
+        };
+
+        let affiliate = AffiliateLink {
+            campaign_id: campaign.campaign_id,
+            affiliate_pubkey: Pubkey::default(),
+            unique_link,
+            total_clicks: 0,
+            claimed: false,
+        };
+
+        let seed = derive_address_seed(
+            &[
+                b"affiliate",
+                ctx.accounts.signer.key().as_ref(),
+                campaign.campaign_id.to_le_bytes().as_ref(),
+            ],
+            &crate::ID,
+        );
+
+        let (asset_compressed_account, asset_new_address_params) =
+            new_compressed_account_with_discriminator(
+                &affiliate,
+                &seed,
+                &crate::ID,
+                &merkle_output_context,
+                &address_merkle_context,
+                address_merkle_tree_root_index,
+                ctx.remaining_accounts,
+            )?;
+
+        let cpi_inputs = create_cpi_inputs_for_new_account(
+            CompressedProof {
+                a: affiliate_proof.a,
+                b: affiliate_proof.b,
+                c: affiliate_proof.c,
+            },
+            asset_new_address_params,
+            asset_compressed_account,
+            None,
+        );
+
+        let invoking_program = &ctx.accounts.get_invoking_program().key();
+        let bump = Pubkey::find_program_address(&[CPI_AUTHORITY_PDA_SEED], invoking_program).1;
+        let signer_seeds = [CPI_AUTHORITY_PDA_SEED, &[bump]];
+
+        // ctx.accounts.get_invoking_program().key();
+        // let (_pda, bump) = Pubkey::find_program_address(&[CPI_AUTHORITY_PDA_SEED], &crate::ID);
+
+        // let signer_seeds = [CPI_AUTHORITY_PDA_SEED, &[bump]];
+
+        verify(&ctx, &cpi_inputs, &[&signer_seeds])?;
 
         Ok(())
     }
@@ -85,9 +153,9 @@ pub mod mit {
         msg!("claim");
 
         ctx.light_accounts.affiliate.claimed = true;
-        
-         // send fund to vault
-         system_program::transfer(
+
+        // send fund to vault
+        system_program::transfer(
             CpiContext::new(
                 ctx.accounts.system_program.to_account_info(),
                 system_program::Transfer {
@@ -101,14 +169,6 @@ pub mod mit {
         Ok(())
     }
 }
-
-// #[light_account]
-// #[derive(Clone, Debug, Default)]
-// pub struct CounterCompressedAccount {
-//     #[truncate]
-//     pub owner: Pubkey,
-//     pub counter: u64,
-// }
 
 #[error_code]
 pub enum CustomError {
@@ -145,6 +205,8 @@ pub struct Create<'info> {
 }
 
 #[light_accounts]
+// #[light_system_accounts]
+// #[derive(Accounts, LightTraits)]
 pub struct RegisterAffiliate<'info> {
     #[account(mut)]
     #[fee_payer]
@@ -157,11 +219,15 @@ pub struct RegisterAffiliate<'info> {
     #[authority]
     pub cpi_signer: AccountInfo<'info>,
 
+    // #[account(
+    //     seeds = [CPI_AUTHORITY_PDA_SEED],
+    //     bump
+    // )]
+    // pub cpi_authority_pda: UncheckedAccount<'info>,
     #[light_account(mut, seeds = [b"campaign", signer.key().as_ref(), campaign.campaign_id.to_le_bytes().as_ref()  ])]
     pub campaign: LightAccount<Campaign>,
-
-    #[light_account(init, seeds = [b"affiliate", signer.key().as_ref(), campaign.campaign_id.to_le_bytes().as_ref()  ])]
-    pub affiliate: LightAccount<AffiliateLink>,
+    // #[light_account(init, seeds = [b"affiliate", signer.key().as_ref(), campaign.campaign_id.to_le_bytes().as_ref()  ])]
+    // pub affiliate: LightAccount<AffiliateLink>,
 }
 
 #[light_accounts]
@@ -211,44 +277,6 @@ pub struct Claim<'info> {
     /// CHECK vault
     pub vault: UncheckedAccount<'info>,
 }
-
-// #[light_accounts]
-// pub struct Increment<'info> {
-//     #[account(mut)]
-//     #[fee_payer]
-//     pub signer: Signer<'info>,
-//     #[self_program]
-//     pub self_program: Program<'info, crate::program::Mit>,
-//     /// CHECK: Checked in light-system-program.
-//     #[authority]
-//     pub cpi_signer: AccountInfo<'info>,
-
-//     #[light_account(
-//         mut,
-//         seeds = [b"counter", signer.key().as_ref()],
-//         constraint = counter.owner == signer.key() @ CustomError::Unauthorized
-//     )]
-//     pub counter: LightAccount<CounterCompressedAccount>,
-// }
-
-// #[light_accounts]
-// pub struct Delete<'info> {
-//     #[account(mut)]
-//     #[fee_payer]
-//     pub signer: Signer<'info>,
-//     #[self_program]
-//     pub self_program: Program<'info, crate::program::Mit>,
-//     /// CHECK: Checked in light-system-program.
-//     #[authority]
-//     pub cpi_signer: AccountInfo<'info>,
-
-//     #[light_account(
-//         close,
-//         seeds = [b"counter", signer.key().as_ref()],
-//         constraint = counter.owner == signer.key() @ CustomError::Unauthorized
-//     )]
-//     pub counter: LightAccount<CounterCompressedAccount>,
-// }
 
 // accounts
 

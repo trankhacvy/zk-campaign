@@ -1,15 +1,12 @@
 import { Program, Provider } from "@coral-xyz/anchor";
 import { useAnchorWallet, useConnection } from "@solana/wallet-adapter-react";
-import { Keypair, PublicKey } from "@solana/web3.js";
+import { Keypair } from "@solana/web3.js";
 import useSWRImmutable from "swr/immutable";
 import idl from "../../../target/idl/mit.json";
 import { Mit } from "../../../target/types/mit";
+import { PROGRAM_ID } from "@/config/constants";
 
 const KEYPAIR = Keypair.generate();
-
-const PROGRAM_ID = new PublicKey(
-  "7zF2xa5P22ahMqdQYo9P4kjD4qxvUy5hGozmk8DyB3iz"
-);
 
 export const useMitProgram = () => {
   const { connection } = useConnection();

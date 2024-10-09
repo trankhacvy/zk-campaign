@@ -11,6 +11,7 @@ import {
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
 import { useMemo } from "react";
 import { RPC_URL } from "@/config/constants";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 require("@solana/wallet-adapter-react-ui/styles.css");
 
@@ -26,10 +27,12 @@ export const SolanaProviders = ({
   );
 
   return (
-    <ConnectionProvider endpoint={RPC_URL}>
-      <WalletProvider wallets={wallets} autoConnect>
-        <WalletModalProvider>{children}</WalletModalProvider>
-      </WalletProvider>
-    </ConnectionProvider>
+    <TooltipProvider>
+      <ConnectionProvider endpoint={RPC_URL}>
+        <WalletProvider wallets={wallets} autoConnect>
+          <WalletModalProvider>{children}</WalletModalProvider>
+        </WalletProvider>
+      </ConnectionProvider>
+    </TooltipProvider>
   );
 };

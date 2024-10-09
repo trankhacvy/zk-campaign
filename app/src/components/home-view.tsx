@@ -3,7 +3,7 @@
 import * as borsh from "borsh";
 import { useRpc } from "@/hooks/useConnection";
 import { useMitProgram } from "@/hooks/useProgram";
-import { BN, utils } from "@coral-xyz/anchor";
+import { BN } from "@coral-xyz/anchor";
 import {
   buildTx,
   bn,
@@ -13,7 +13,7 @@ import {
   deriveAddress,
   defaultTestStateTreeAccounts,
   PackedMerkleContext,
-  CompressedAccount,
+  MerkleContext,
 } from "@lightprotocol/stateless.js";
 import { useWallet } from "@solana/wallet-adapter-react";
 import {
@@ -24,6 +24,7 @@ import {
 } from "@solana/web3.js";
 import dynamic from "next/dynamic";
 import { campaignSchema } from "@/idl/schema";
+import { packMerkleContext } from "@/lib/helper";
 
 const WalletMultiButtonDynamic = dynamic(
   async () =>
@@ -39,7 +40,7 @@ const setComputeUnitPriceIx = ComputeBudgetProgram.setComputeUnitPrice({
   microLamports: 1,
 });
 
-const campaignId = new BN(41);
+const campaignId = new BN(43);
 
 export const HomeView = () => {
   const { publicKey, signTransaction } = useWallet();
@@ -206,7 +207,7 @@ export const HomeView = () => {
         program.programId
       );
 
-      let affiliateAddress = deriveAddress(affiliateAddressSeed);
+      const affiliateAddress = deriveAddress(affiliateAddressSeed);
 
       console.log("affiliateAddressSeed", affiliateAddress.toBase58());
 
@@ -230,7 +231,7 @@ export const HomeView = () => {
         program.programId
       );
 
-      let campaignAddress = deriveAddress(campaignAddressSeed);
+      const campaignAddress = deriveAddress(campaignAddressSeed);
 
       const campaignData = await rpc.getCompressedAccount(
         bn(campaignAddress.toBytes())
@@ -241,28 +242,35 @@ export const HomeView = () => {
       if (!campaignData || !campaignData.data) {
         throw new Error("Failed to get campaignData data hash");
       }
+
       const campaignProof = await rpc.getValidityProofV0(
         [
           {
             hash: bn(Uint8Array.from(campaignData.hash)),
-            tree: merkleTree,
-            queue: nullifierQueue,
+            tree: campaignData.merkleTree,
+            queue: campaignData.nullifierQueue,
           },
         ],
         undefined
       );
 
+      console.log("campaignProof", campaignProof);
+
       const remainingAccounts: Array<AccountMeta> = [];
 
-      const merkleContext: PackedMerkleContext = {
-        merkleTreePubkeyIndex: insertOrGet(remainingAccounts, merkleTree),
-        nullifierQueuePubkeyIndex: insertOrGet(
-          remainingAccounts,
-          nullifierQueue
-        ),
-        leafIndex: 0,
-        queueIndex: null,
+      const merkleContext: MerkleContext = {
+        merkleTree: campaignData.merkleTree,
+        nullifierQueue: campaignData.nullifierQueue,
+        leafIndex: campaignData.leafIndex,
+        hash: campaignData.hash,
       };
+
+      const packedMerkleContext = packMerkleContext(
+        merkleContext,
+        remainingAccounts
+      );
+
+      console.log("packedMerkleContext", packedMerkleContext);
 
       const addressMerkleContext = {
         addressMerkleTreePubkeyIndex: insertOrGet(
@@ -275,24 +283,12 @@ export const HomeView = () => {
       const ix = await program.methods
         .registerAffiliate(
           [campaignData.data.data],
-          {
-            a: [
-              ...affiliateProof.compressedProof.a,
-              ...campaignProof.compressedProof.a,
-            ],
-            b: [
-              ...affiliateProof.compressedProof.b,
-              ...campaignProof.compressedProof.b,
-            ],
-            c: [
-              ...affiliateProof.compressedProof.c,
-              ...campaignProof.compressedProof.c,
-            ],
-          },
-          merkleContext,
-          0,
+          campaignProof.compressedProof,
+          packedMerkleContext,
+          campaignProof.rootIndices[0],
           addressMerkleContext,
-          affiliateProof.rootIndices[0],
+          0,
+          affiliateProof.compressedProof,
           "campaignId"
         )
         .accounts({
